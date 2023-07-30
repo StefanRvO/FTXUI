@@ -24,7 +24,7 @@ struct Interval {
 };
 
 // As of Unicode 13.0.0
-const std::array<Interval, 116> g_full_width_characters = {{
+static const std::array<Interval, 116> g_full_width_characters = {{
     {0x01100, 0x0115f}, {0x0231a, 0x0231b}, {0x02329, 0x0232a},
     {0x023e9, 0x023ec}, {0x023f0, 0x023f0}, {0x023f3, 0x023f3},
     {0x025fd, 0x025fe}, {0x02614, 0x02615}, {0x02648, 0x02653},
@@ -73,9 +73,33 @@ struct WordBreakPropertyInterval {
   WBP property;
 };
 
+class WorkBreakPropertyLookup {
+ public:
+  template <size_t N>
+  WorkBreakPropertyLookup(
+      const std::array<WordBreakPropertyInterval, N>& table) {
+    lookup.fill(WBP::ALetter);
+    for (const WordBreakPropertyInterval& interval : table) {
+      for (uint32_t i = interval.first; i <= interval.last; i++) {
+        lookup[i] = interval.property;
+      }
+    }
+  }
+
+  WBP getProperty(uint32_t ucs) const {
+    if (ucs > lookup.size()) {
+      return WBP::Invalid;
+    }
+    return lookup[ucs];
+  }
+
+ private:
+  std::array<WBP, 0x100000> lookup;
+};
+
 // Properties from:
 // https://www.unicode.org/Public/UCD/latest/ucd/auxiliary/WordBreakProperty.txt
-const std::array<WordBreakPropertyInterval, 1288> g_word_break_intervals = {{
+static const std::array<WordBreakPropertyInterval, 1288> g_word_break_intervals = {{
     {0x0000A, 0x0000A, WBP::LF},
     {0x0000B, 0x0000C, WBP::Newline},
     {0x0000D, 0x0000D, WBP::CR},
@@ -1366,6 +1390,9 @@ const std::array<WordBreakPropertyInterval, 1288> g_word_break_intervals = {{
     {0xE0100, 0xE01EF, WBP::Extend},
 }};
 
+static const WorkBreakPropertyLookup g_word_break_property_lookup(
+    g_word_break_intervals);
+
 // Find a codepoint inside a sorted list of Interval.
 template <size_t N>
 bool Bisearch(uint32_t ucs, const std::array<Interval, N>& table) {
@@ -1382,30 +1409,6 @@ bool Bisearch(uint32_t ucs, const std::array<Interval, N>& table) {
     } else if (ucs < table[mid].first) {  // NOLINT
       max = mid - 1;
     } else {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// Find a value inside a sorted list of Interval + property.
-template <class C, size_t N>
-bool Bisearch(uint32_t ucs, const std::array<C, N>& table, C* out) {
-  if (ucs < table.front().first || ucs > table.back().last) {  // NOLINT
-    return false;
-  }
-
-  int min = 0;
-  int max = N - 1;
-  while (max >= min) {
-    const int mid = (min + max) / 2;
-    if (ucs > table[mid].last) {  // NOLINT
-      min = mid + 1;
-    } else if (ucs < table[mid].first) {  // NOLINT
-      max = mid - 1;
-    } else {
-      *out = table[mid];  // NOLINT
       return true;
     }
   }
@@ -1571,9 +1574,7 @@ bool IsControl(uint32_t ucs) {
 }
 
 WordBreakProperty CodepointToWordBreakProperty(uint32_t codepoint) {
-  WordBreakPropertyInterval interval = {0, 0, WBP::ALetter};
-  std::ignore = Bisearch(codepoint, g_word_break_intervals, &interval);
-  return interval.property;
+  return g_word_break_property_lookup.getProperty(codepoint);
 }
 
 int wchar_width(wchar_t ucs) {
@@ -1821,9 +1822,7 @@ std::vector<WordBreakProperty> Utf8ToWordBreakProperty(
       continue;
     }
 
-    WordBreakPropertyInterval interval = {0, 0, WBP::ALetter};
-    std::ignore = Bisearch(codepoint, g_word_break_intervals, &interval);
-    out.push_back(interval.property);
+    out.push_back(g_word_break_property_lookup.getProperty(codepoint));
   }
   return out;
 }
